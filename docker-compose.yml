@@ -1,0 +1,15 @@
+version: '3'
+services:
+  backend:
+    build: ./backend
+    environment:
+      RPC_USER: ${RPC_USER}
+      RPC_PASSWORD: ${RPC_PASSWORD}
+      RPC_HOST: ${RPC_HOST}
+      RPC_PORT: ${RPC_PORT}
+    ports:
+      - "5000:5000"
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
