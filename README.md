@@ -11,7 +11,7 @@ Trace a satoshi from a given UTXO back to the block it was mined, streaming the 
 2. Create `.env` with your Bitcoin Core RPC credentials
 3. Run:
 ```
-docker-compose up --build
+sudo docker-compose up --build
 ```
 4. Open `http://localhost:3000`
 
