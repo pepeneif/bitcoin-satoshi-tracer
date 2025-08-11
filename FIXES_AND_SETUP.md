@@ -73,7 +73,7 @@ The original Bitcoin Satoshi Tracer had several critical issues that prevented i
 
 3. **Access the application:**
    - Local: `http://localhost:3000`
-   - Remote: `http://your-domain:3000` (e.g., `http://nore.503es.com:3000`)
+   - Remote: `http://your-domain:3000`
 
 ### Verifying the Fix
 
