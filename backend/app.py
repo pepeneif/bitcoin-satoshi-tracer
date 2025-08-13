@@ -1,6 +1,6 @@
 from flask import Flask
 from flask_socketio import SocketIO, emit
-from bitcoin_rpc import get_utxo_history
+from electrum_client import get_utxo_history
 import logging
 import sys
 import traceback
@@ -14,11 +14,13 @@ socketio = SocketIO(app, cors_allowed_origins="*", logger=True)
 
 @socketio.on('connect')
 def handle_connect():
+    from flask import request
     logger.info(f'Client connected: {request.sid}')
-    emit('status', {'message': 'Connected to Bitcoin Tracer backend'})
+    emit('status', {'message': 'Connected to Bitcoin Tracer backend (Electrs)'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
+    from flask import request
     logger.info(f'Client disconnected: {request.sid}')
 
 @socketio.on('trace_utxo')
@@ -101,9 +103,9 @@ def handle_trace_utxo(data):
             # Determine the type of error and provide appropriate message
             error_message = str(trace_error)
             if 'connection' in error_message.lower():
-                error_message = 'Failed to connect to Bitcoin RPC node. Please check your Bitcoin Core configuration.'
+                error_message = 'Failed to connect to Electrs server. Please check your Electrs configuration.'
             elif 'authentication' in error_message.lower() or 'unauthorized' in error_message.lower():
-                error_message = 'Bitcoin RPC authentication failed. Please check your RPC credentials.'
+                error_message = 'Electrs server authentication failed. Please check your server configuration.'
             elif 'not found' in error_message.lower() or 'invalid' in error_message.lower():
                 error_message = f'Transaction {txid} not found. Please verify the TXID is correct and the transaction exists.'
             else:
@@ -124,13 +126,13 @@ def handle_trace_utxo(data):
 def health_check():
     """Simple health check endpoint"""
     try:
-        # Test Bitcoin RPC connection
-        from bitcoin_rpc import test_rpc_connection
-        rpc_status = test_rpc_connection()
+        # Test Electrs connection
+        from electrum_client import test_electrs_connection
+        electrs_status = test_electrs_connection()
         return {
             'status': 'healthy',
-            'rpc_connected': rpc_status['connected'],
-            'rpc_message': rpc_status['message']
+            'electrs_connected': electrs_status['connected'],
+            'electrs_message': electrs_status['message']
         }
     except Exception as e:
         return {
@@ -139,18 +141,18 @@ def health_check():
         }, 500
 
 if __name__ == '__main__':
-    logger.info('Starting Bitcoin Satoshi Tracer backend...')
+    logger.info('Starting Bitcoin Satoshi Tracer backend (Electrs)...')
     try:
-        # Test RPC connection on startup
-        from bitcoin_rpc import test_rpc_connection
-        rpc_status = test_rpc_connection()
-        if rpc_status['connected']:
-            logger.info(f'Bitcoin RPC connection successful: {rpc_status["message"]}')
+        # Test Electrs connection on startup
+        from electrum_client import test_electrs_connection
+        electrs_status = test_electrs_connection()
+        if electrs_status['connected']:
+            logger.info(f'Electrs connection successful: {electrs_status["message"]}')
         else:
-            logger.warning(f'Bitcoin RPC connection failed: {rpc_status["message"]}')
-            logger.warning('Server will start but tracing may not work until RPC connection is fixed.')
+            logger.warning(f'Electrs connection failed: {electrs_status["message"]}')
+            logger.warning('Server will start but tracing may not work until Electrs connection is fixed.')
     except Exception as e:
-        logger.error(f'Failed to test RPC connection on startup: {e}')
+        logger.error(f'Failed to test Electrs connection on startup: {e}')
     
     logger.info('Starting Flask-SocketIO server on 0.0.0.0:5000')
     socketio.run(app, host='0.0.0.0', port=5000, debug=False)

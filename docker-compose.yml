@@ -3,10 +3,10 @@ services:
   backend:
     build: ./backend
     environment:
-      RPC_USER: ${RPC_USER}
-      RPC_PASSWORD: ${RPC_PASSWORD}
-      RPC_HOST: ${RPC_HOST}
-      RPC_PORT: ${RPC_PORT}
+      ELECTRS_HOST: ${ELECTRS_HOST}
+      ELECTRS_PORT: ${ELECTRS_PORT}
+      ELECTRS_USE_SSL: ${ELECTRS_USE_SSL}
+      ELECTRS_SSL_PORT: ${ELECTRS_SSL_PORT}
     ports:
       - "5000:5000"
   frontend:
