@@ -7,10 +7,11 @@
 
 **Root Cause**: The `electrum-client` library had incompatible API signatures.
 
-**Solution**: 
+**Solution**:
 - Removed `electrum-client` dependency from [`requirements.txt`](requirements.txt)
 - Replaced with custom JSON-RPC implementation in [`backend/electrs_client.py`](backend/electrs_client.py)
-- Created `ElectrsClient` class with proper parameter formatting
+- Created `ElectrsClient` class using only standard Python libraries (socket, json)
+- No additional dependencies required for Electrs functionality
 
 ### 2. Flask-SocketIO Production Server Warning
 **Problem**: `RuntimeError: The Werkzeug web server is not designed to run in production`
@@ -36,7 +37,8 @@
 1. **`backend/requirements.txt`**
    ```diff
    - electrum-client
-   + # Removed electrum-client (replaced with custom implementation)
+   + # Removed electrum-client (replaced with custom JSON-RPC implementation)
+   + # No external electrum library dependencies needed
    ```
 
 2. **`backend/electrs_client.py`**
