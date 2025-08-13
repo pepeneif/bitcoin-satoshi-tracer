@@ -1,4 +1,5 @@
 flask
 flask-socketio
 electrum-client
-bitcoin
+python-bitcoinlib
+python-bitcoinrpc

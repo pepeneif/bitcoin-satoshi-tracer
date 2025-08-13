@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Quick test script to validate Electrs connection and functionality.
 Run this before starting the full application to ensure everything works.
@@ -23,7 +24,7 @@ def test_electrs_integration():
         # Test 1: Import modules
         print("📦 Testing module imports...")
         try:
-            from electrum_client import test_electrs_connection, validate_txid
+            from electrs_client import test_electrs_connection, validate_txid
             print("✅ Successfully imported electrum_client module")
         except ImportError as e:
             print(f"❌ Failed to import modules: {e}")

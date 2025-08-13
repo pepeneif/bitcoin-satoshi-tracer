@@ -1,6 +1,6 @@
 from flask import Flask
 from flask_socketio import SocketIO, emit
-from electrum_client import get_utxo_history
+from electrs_client import get_utxo_history
 import logging
 import sys
 import traceback
@@ -127,7 +127,7 @@ def health_check():
     """Simple health check endpoint"""
     try:
         # Test Electrs connection
-        from electrum_client import test_electrs_connection
+        from electrs_client import test_electrs_connection
         electrs_status = test_electrs_connection()
         return {
             'status': 'healthy',
@@ -144,7 +144,7 @@ if __name__ == '__main__':
     logger.info('Starting Bitcoin Satoshi Tracer backend (Electrs)...')
     try:
         # Test Electrs connection on startup
-        from electrum_client import test_electrs_connection
+        from electrs_client import test_electrs_connection
         electrs_status = test_electrs_connection()
         if electrs_status['connected']:
             logger.info(f'Electrs connection successful: {electrs_status["message"]}')
