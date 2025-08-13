@@ -3,10 +3,8 @@ import logging
 import time
 import hashlib
 import json
-from typing import Dict, List, Optional, Generator, Tuple
-# Import from installed electrum_client package
-from electrum_client.rpc import Client as ElectrumClient
 import socket
+from typing import Dict, List, Optional, Generator, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -36,23 +34,102 @@ def get_script_hash(address: str) -> str:
         # Fallback: create a simple hash (less accurate but functional)
         return hashlib.sha256(address.encode()).hexdigest()
 
-def get_client() -> ElectrumClient:
-    """Get or create Electrum client instance"""
-    global _client
+class ElectrsClient:
+    """Direct JSON-RPC client for Electrs server"""
     
-    if _client is None:
+    def __init__(self, host: str, port: int, use_ssl: bool = False):
+        self.host = host
+        self.port = port
+        self.use_ssl = use_ssl
+        self.socket = None
+        self.request_id = 0
+        
+    def connect(self):
+        """Establish connection to Electrs server"""
         try:
-            port = electrs_ssl_port if electrs_use_ssl else electrs_port
-            _client = ElectrumClient(addr=electrs_host, port=port)
-            logger.info(f"Connected to Electrs server at {electrs_host}:{port} (SSL: {electrs_use_ssl})")
+            if self.use_ssl:
+                import ssl
+                context = ssl.create_default_context()
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket = context.wrap_socket(sock, server_hostname=self.host)
+            else:
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            self.socket.settimeout(30)  # 30 second timeout
+            self.socket.connect((self.host, self.port))
+            logger.info(f"Connected to Electrs server at {self.host}:{self.port} (SSL: {self.use_ssl})")
+            
         except Exception as e:
             logger.error(f"Failed to connect to Electrs server: {e}")
             raise
     
+    def close(self):
+        """Close connection"""
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
+    
+    def call(self, method: str, params: List = None):
+        """Make a JSON-RPC call to the Electrs server"""
+        if not self.socket:
+            self.connect()
+        
+        self.request_id += 1
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params or [],
+            "id": self.request_id
+        }
+        
+        try:
+            # Send request
+            request_data = json.dumps(request) + '\n'
+            self.socket.sendall(request_data.encode('utf-8'))
+            
+            # Receive response
+            response_data = b''
+            while b'\n' not in response_data:
+                chunk = self.socket.recv(4096)
+                if not chunk:
+                    raise ConnectionError("Connection closed by server")
+                response_data += chunk
+            
+            # Parse response
+            response_line = response_data.split(b'\n')[0]
+            response = json.loads(response_line.decode('utf-8'))
+            
+            if 'error' in response:
+                error = response['error']
+                raise Exception(f"Electrs error: {error.get('message', error)}")
+            
+            return response.get('result')
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON response from Electrs: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Electrs call failed: {e}")
+            # Try to reconnect on connection errors
+            if 'connection' in str(e).lower():
+                self.close()
+            raise
+
+def get_client() -> ElectrsClient:
+    """Get or create Electrs client instance"""
+    global _client
+    
+    if _client is None:
+        port = electrs_ssl_port if electrs_use_ssl else electrs_port
+        _client = ElectrsClient(electrs_host, port, electrs_use_ssl)
+    
     return _client
 
 def close_client():
-    """Close the Electrum client connection"""
+    """Close the Electrs client connection"""
     global _client
     if _client:
         _client.close()
@@ -62,8 +139,8 @@ def test_electrs_connection():
     """Test the Electrs connection"""
     try:
         client = get_client()
-        # Test with server version call
-        version_info = client.call('server.version', 'satoshi-tracer', '1.4.2')
+        # Test with server version call - simpler format
+        version_info = client.call('server.version', ['satoshi-tracer', ['1.4', '1.4.2']])
         return {
             'connected': True,
             'message': f'Connected to Electrs server. Version: {version_info}'
@@ -71,17 +148,36 @@ def test_electrs_connection():
         
     except Exception as e:
         logger.error(f'Electrs connection error: {e}')
-        return {
-            'connected': False,
-            'message': f'Connection failed: {e}'
-        }
+        # Try a simpler connection test if version fails
+        try:
+            client = get_client()
+            # Just test basic connectivity
+            client.connect()
+            return {
+                'connected': True,
+                'message': 'Connected to Electrs server (version check failed but connection OK)'
+            }
+        except Exception as e2:
+            return {
+                'connected': False,
+                'message': f'Connection failed: {e2}'
+            }
 
 def get_transaction_async(txid: str) -> Dict:
     """Get transaction data from Electrs server"""
     try:
         client = get_client()
         # Get raw transaction hex
-        tx_hex = client.call('blockchain.transaction.get', txid)
+        tx_hex = client.call('blockchain.transaction.get', [txid])
+        
+        # Also get transaction with verbose information if available
+        try:
+            tx_verbose = client.call('blockchain.transaction.get', [txid, True])
+            if isinstance(tx_verbose, dict):
+                return tx_verbose
+        except:
+            # Fallback to hex-only response
+            pass
         
         # For now, return a simplified transaction format
         # In production, you'd want to parse the hex using a proper bitcoin library
@@ -240,10 +336,10 @@ def get_address_info(address: str) -> Optional[Dict]:
         script_hash = get_script_hash(address)
         
         # Get address history
-        history = client.call('blockchain.scripthash.get_history', script_hash)
+        history = client.call('blockchain.scripthash.get_history', [script_hash])
         
         # Get current balance
-        balance_info = client.call('blockchain.scripthash.get_balance', script_hash)
+        balance_info = client.call('blockchain.scripthash.get_balance', [script_hash])
         
         return {
             'address': address,

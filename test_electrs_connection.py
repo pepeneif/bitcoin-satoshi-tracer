@@ -94,6 +94,7 @@ if __name__ == '__main__':
     else:
         print("⚠️  No .env file found. Using default values.")
         print("💡 Copy .env.example to .env and configure your Electrs server")
+        print("💡 For testing, you can use: node.503es.com:50001 (public Electrs server)")
     
     success = test_electrs_integration()
     sys.exit(0 if success else 1)

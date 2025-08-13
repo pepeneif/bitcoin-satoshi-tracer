@@ -155,4 +155,4 @@ if __name__ == '__main__':
         logger.error(f'Failed to test Electrs connection on startup: {e}')
     
     logger.info('Starting Flask-SocketIO server on 0.0.0.0:5000')
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

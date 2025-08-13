@@ -1,5 +1,5 @@
 flask
 flask-socketio
-electrum-client
+python-electrumx-client
 python-bitcoinlib
 python-bitcoinrpc
