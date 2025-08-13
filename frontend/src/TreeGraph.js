@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 
-export default function TreeGraph({ data }) {
+export default function TreeGraph({ data, circularPatterns = [], addressStats = {} }) {
   const svgRef = useRef();
   const [dimensions, setDimensions] = useState({ width: 1200, height: 800 });
+  const [highlightedCycle, setHighlightedCycle] = useState(null);
 
   useEffect(() => {
     if (!data.nodes || data.nodes.length === 0) {
@@ -34,16 +35,53 @@ export default function TreeGraph({ data }) {
 
     svg.call(zoom);
 
+    // Helper function to get risk color
+    const getRiskColor = (riskScore) => {
+      if (riskScore >= 0.8) return '#dc3545';  // High risk - red
+      if (riskScore >= 0.5) return '#fd7e14';  // Medium risk - orange
+      if (riskScore >= 0.3) return '#ffc107';  // Low risk - yellow
+      return '#28a745';  // Very low risk - green
+    };
+
+    // Helper function to check if node is in any circular pattern
+    const getNodeCircularInfo = (nodeId) => {
+      for (const pattern of circularPatterns) {
+        const isInPattern = pattern.transactions?.some(tx =>
+          `${tx.txid}:${tx.vout}` === nodeId
+        );
+        if (isInPattern) {
+          return {
+            isCircular: true,
+            riskScore: pattern.risk_score || 0,
+            cycleId: pattern.cycle_id,
+            patternType: pattern.pattern_type
+          };
+        }
+      }
+      return { isCircular: false, riskScore: 0 };
+    };
+
     // Prepare data for D3
-    const nodes = data.nodes.map((node, index) => ({
-      id: `${node.txid}:${node.vout}`,
-      txid: node.txid,
-      vout: node.vout,
-      addresses: node.addresses || [],
-      index: index,
-      x: 0,
-      y: 0
-    }));
+    const nodes = data.nodes.map((node, index) => {
+      const nodeId = `${node.txid}:${node.vout}`;
+      const circularInfo = getNodeCircularInfo(nodeId);
+      
+      return {
+        id: nodeId,
+        txid: node.txid,
+        vout: node.vout,
+        addresses: node.addresses || [],
+        index: index,
+        x: 0,
+        y: 0,
+        // Enhanced properties
+        isCircular: circularInfo.isCircular || node.is_circular || false,
+        circularRisk: circularInfo.riskScore || node.circular_risk || 0,
+        cycleId: circularInfo.cycleId || node.cycle_id,
+        patternType: circularInfo.patternType,
+        depth: node.depth || 0
+      };
+    });
 
     const links = data.links.map(link => ({
       source: link.source,
@@ -79,16 +117,48 @@ export default function TreeGraph({ data }) {
       .attr('class', 'node')
       .style('cursor', 'pointer');
 
-    // Add circles for nodes
+    // Add circles for nodes with enhanced styling
     nodeElements.append('circle')
-      .attr('r', 25)
+      .attr('r', (d) => d.isCircular ? 30 : 25)  // Larger for circular nodes
       .attr('fill', (d, i) => {
-        // Color nodes based on their position in the trace
-        const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
-        return colors[i % colors.length];
+        if (d.isCircular && d.circularRisk > 0) {
+          return getRiskColor(d.circularRisk);
+        }
+        // Default color scheme based on depth
+        const depthColors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+        return depthColors[d.depth % depthColors.length] || depthColors[i % depthColors.length];
       })
-      .attr('stroke', '#fff')
-      .attr('stroke-width', 2);
+      .attr('stroke', (d) => {
+        if (d.isCircular) {
+          return d.circularRisk > 0.7 ? '#dc3545' : '#ffc107';  // Red or yellow border for circular
+        }
+        return '#fff';
+      })
+      .attr('stroke-width', (d) => d.isCircular ? 3 : 2)
+      .style('filter', (d) => {
+        if (d.isCircular && d.circularRisk > 0.7) {
+          return 'drop-shadow(0px 0px 6px rgba(220, 53, 69, 0.6))';  // Glow effect for high risk
+        }
+        return null;
+      });
+
+    // Add circular pattern indicator
+    nodeElements.filter(d => d.isCircular)
+      .append('circle')
+      .attr('r', 35)
+      .attr('fill', 'none')
+      .attr('stroke', '#ff6b6b')
+      .attr('stroke-width', 2)
+      .attr('stroke-dasharray', '5,5')
+      .style('opacity', 0.7)
+      .append('animateTransform')
+      .attr('attributeName', 'transform')
+      .attr('attributeType', 'XML')
+      .attr('type', 'rotate')
+      .attr('from', '0 0 0')
+      .attr('to', '360 0 0')
+      .attr('dur', '3s')
+      .attr('repeatCount', 'indefinite');
 
     // Add VOUT text inside circles
     nodeElements.append('text')
@@ -147,15 +217,48 @@ export default function TreeGraph({ data }) {
             (link.source.id === d.id || link.target.id === d.id) ? 3 : 2
           );
 
-        // Show tooltip
-        let tooltipContent = `<strong>TXID:</strong> ${d.txid}<br/>`;
-        tooltipContent += `<strong>VOUT:</strong> ${d.vout}<br/>`;
-        if (d.addresses && d.addresses.length > 0) {
-          tooltipContent += `<strong>Addresses:</strong><br/>`;
-          d.addresses.forEach(addr => {
-            tooltipContent += `${addr}<br/>`;
-          });
+        // Highlight circular pattern if applicable
+        if (d.isCircular && d.cycleId) {
+          setHighlightedCycle(d.cycleId);
+          // Highlight all nodes in the same cycle
+          nodeElements.selectAll('circle')
+            .style('opacity', node => {
+              return node.cycleId === d.cycleId ? 1 : 0.3;
+            });
         }
+
+        // Enhanced tooltip with circular information
+        let tooltipContent = `<div style="max-width: 300px;">`;
+        tooltipContent += `<strong>TXID:</strong> ${d.txid}<br/>`;
+        tooltipContent += `<strong>VOUT:</strong> ${d.vout}<br/>`;
+        tooltipContent += `<strong>Depth:</strong> ${d.depth}<br/>`;
+        
+        if (d.isCircular) {
+          tooltipContent += `<hr style="margin: 8px 0; border: 1px solid #ffc107;">`;
+          tooltipContent += `<strong>🔄 Circular Transaction</strong><br/>`;
+          tooltipContent += `<strong>Risk Score:</strong> ${(d.circularRisk * 100).toFixed(1)}%<br/>`;
+          if (d.patternType) {
+            tooltipContent += `<strong>Pattern:</strong> ${d.patternType.replace(/_/g, ' ')}<br/>`;
+          }
+          if (d.cycleId) {
+            tooltipContent += `<strong>Cycle ID:</strong> ${d.cycleId}<br/>`;
+          }
+        }
+        
+        if (d.addresses && d.addresses.length > 0) {
+          tooltipContent += `<hr style="margin: 8px 0;">`;
+          tooltipContent += `<strong>Addresses (${d.addresses.length}):</strong><br/>`;
+          d.addresses.slice(0, 3).forEach(addr => {
+            const stats = addressStats[addr];
+            const riskIndicator = stats?.risk > 0.7 ? '🔴' : stats?.risk > 0.4 ? '🟡' : '🟢';
+            tooltipContent += `${riskIndicator} ${addr}<br/>`;
+          });
+          if (d.addresses.length > 3) {
+            tooltipContent += `<em>... and ${d.addresses.length - 3} more</em><br/>`;
+          }
+        }
+        
+        tooltipContent += `</div>`;
 
         tooltip.transition()
           .duration(200)
@@ -169,6 +272,12 @@ export default function TreeGraph({ data }) {
         linkElements
           .style('stroke', '#999')
           .style('stroke-width', 2);
+
+        // Reset node highlighting
+        nodeElements.selectAll('circle')
+          .style('opacity', 1);
+
+        setHighlightedCycle(null);
 
         // Hide tooltip
         tooltip.transition()
@@ -268,11 +377,82 @@ export default function TreeGraph({ data }) {
     );
   }
 
+  // Function to highlight a specific circular pattern
+  const highlightCircularPattern = (cycleId) => {
+    if (!svgRef.current) return;
+    
+    const svg = d3.select(svgRef.current);
+    svg.selectAll('.node circle')
+      .style('opacity', d => d.cycleId === cycleId ? 1 : 0.3);
+    
+    setHighlightedCycle(cycleId);
+    
+    // Auto-reset after 3 seconds
+    setTimeout(() => {
+      svg.selectAll('.node circle').style('opacity', 1);
+      setHighlightedCycle(null);
+    }, 3000);
+  };
+
   return (
     <div style={{ width: '100%', overflow: 'hidden' }}>
+      {/* Enhanced instructions with circular pattern info */}
       <div className="instructions">
         <strong>Interactive Controls:</strong> Drag nodes to reposition • Hover for transaction details • Click to copy TXID • Scroll to zoom in/out
+        {circularPatterns.length > 0 && (
+          <>
+            <br/>
+            <strong>🔄 Circular Patterns:</strong>
+            <span style={{ color: '#dc3545' }}>● High Risk</span> •
+            <span style={{ color: '#fd7e14' }}>● Medium Risk</span> •
+            <span style={{ color: '#ffc107' }}>● Low Risk</span>
+            {circularPatterns.length > 0 && (
+              <span> • {circularPatterns.length} pattern{circularPatterns.length !== 1 ? 's' : ''} detected</span>
+            )}
+          </>
+        )}
       </div>
+      
+      {/* Circular patterns legend/controls */}
+      {circularPatterns.length > 0 && (
+        <div style={{
+          background: '#f8f9fa',
+          border: '1px solid #dee2e6',
+          borderRadius: '6px',
+          padding: '10px',
+          marginBottom: '10px',
+          fontSize: '12px'
+        }}>
+          <strong>Detected Circular Patterns:</strong>
+          <div style={{ display: 'flex', gap: '10px', marginTop: '5px', flexWrap: 'wrap' }}>
+            {circularPatterns.slice(0, 5).map((pattern, index) => (
+              <button
+                key={pattern.cycle_id || index}
+                onClick={() => highlightCircularPattern(pattern.cycle_id)}
+                style={{
+                  background: getRiskColor(pattern.risk_score || 0),
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  opacity: highlightedCycle === pattern.cycle_id ? 1 : 0.8
+                }}
+                title={`${pattern.pattern_type || 'Unknown'} - Risk: ${((pattern.risk_score || 0) * 100).toFixed(1)}%`}
+              >
+                {pattern.cycle_id?.substring(0, 8) || `Pattern ${index + 1}`}
+              </button>
+            ))}
+            {circularPatterns.length > 5 && (
+              <span style={{ color: '#6c757d', alignSelf: 'center' }}>
+                +{circularPatterns.length - 5} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         width={dimensions.width}

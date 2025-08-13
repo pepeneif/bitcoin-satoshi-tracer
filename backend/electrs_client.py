@@ -5,6 +5,7 @@ import hashlib
 import json
 import socket
 from typing import Dict, List, Optional, Generator, Tuple
+from circular_detector import CircularTransactionDetector, TransactionStep, CircularPattern
 
 logger = logging.getLogger(__name__)
 
@@ -254,16 +255,20 @@ def get_transaction_with_retry(txid: str, max_retries: int = 3, delay: int = 1) 
             logger.warning(f'Electrs request failed (attempt {attempt + 1}/{max_retries}): {e}')
             time.sleep(delay)
 
-def get_utxo_history(txid: str, vout: int) -> Generator[Dict, None, None]:
+def get_utxo_history(txid: str, vout: int, max_depth: int = 20, enable_circular_detection: bool = True) -> Generator[Dict, None, None]:
     """
     Walk backwards from the given txid/vout and yield intermediate steps
-    for WebSocket streaming. This traces the satoshi history using Electrs.
+    for WebSocket streaming. This traces the satoshi history using Electrs with optional circular detection.
     """
-    logger.info(f'Starting UTXO trace for {txid}:{vout}')
+    logger.info(f'Starting UTXO trace for {txid}:{vout} (max_depth: {max_depth}, circular_detection: {enable_circular_detection})')
     
     visited = set()
     stack = [(txid, vout, 0)]  # (txid, vout, depth)
-    max_depth = 100  # Prevent infinite loops
+    all_addresses = set()  # Collect all unique addresses
+    
+    # Initialize circular transaction detector
+    circular_detector = CircularTransactionDetector(max_cycle_length=min(15, max_depth)) if enable_circular_detection else None
+    previous_tx = None
     
     while stack:
         current_txid, current_vout, depth = stack.pop()
@@ -275,6 +280,9 @@ def get_utxo_history(txid: str, vout: int) -> Generator[Dict, None, None]:
             
         # Skip if already visited
         if (current_txid, current_vout) in visited:
+            # If circular detection is enabled, this might indicate a cycle
+            if circular_detector and previous_tx:
+                circular_detector.add_transaction_link(previous_tx, (current_txid, current_vout))
             continue
             
         visited.add((current_txid, current_vout))
@@ -297,15 +305,63 @@ def get_utxo_history(txid: str, vout: int) -> Generator[Dict, None, None]:
             # Get value if available
             value = vout_data.get('value', 0)
             
-            # Yield current step
+            # Collect unique addresses
+            if addresses:
+                all_addresses.update(addresses)
+            
+            # Create transaction step for circular detection
+            if circular_detector:
+                tx_step = TransactionStep(
+                    txid=current_txid,
+                    vout=current_vout,
+                    addresses=addresses,
+                    value=value,
+                    depth=depth,
+                    script_type=script_pub_key.get('type', 'unknown')
+                )
+                
+                # Add to circular detector and check for new patterns
+                new_cycles = circular_detector.add_transaction_step(tx_step)
+                
+                # Link to previous transaction
+                if previous_tx:
+                    circular_detector.add_transaction_link(previous_tx, (current_txid, current_vout))
+                
+                # Yield circular pattern alerts
+                for cycle in new_cycles:
+                    yield {
+                        "type": "circular_pattern_detected",
+                        "cycle_id": cycle.id,
+                        "cycle_length": cycle.cycle_length,
+                        "risk_score": cycle.risk_score,
+                        "pattern_type": cycle.pattern_type,
+                        "confidence": cycle.confidence,
+                        "total_value": cycle.total_value,
+                        "addresses_involved": list(cycle.addresses),
+                        "transactions": [{"txid": tx[0], "vout": tx[1]} for tx in cycle.transactions]
+                    }
+            
+            # Yield current step with enhanced data
             step_data = {
                 "txid": current_txid,
                 "vout": current_vout,
                 "addresses": addresses,
                 "value": value,
                 "depth": depth,
-                "script_type": script_pub_key.get('type', 'unknown')
+                "script_type": script_pub_key.get('type', 'unknown'),
+                "circular_risk": 0.0,  # Will be updated if part of a cycle
+                "is_circular": False   # Will be updated if part of a cycle
             }
+            
+            # Check if this transaction is part of any detected cycles
+            if circular_detector:
+                current_tx_key = (current_txid, current_vout)
+                for cycle in circular_detector.detected_cycles:
+                    if current_tx_key in cycle.transactions:
+                        step_data["circular_risk"] = cycle.risk_score
+                        step_data["is_circular"] = True
+                        step_data["cycle_id"] = cycle.id
+                        break
             
             logger.debug(f'Yielding step: {step_data}')
             yield step_data
@@ -317,6 +373,9 @@ def get_utxo_history(txid: str, vout: int) -> Generator[Dict, None, None]:
                     # Skip coinbase transactions (no previous transaction)
                     if vin.get('txid') and vin.get('txid') != '0' * 64:
                         stack.append((vin['txid'], vin['vout'], depth + 1))
+            
+            # Update previous transaction for linking
+            previous_tx = (current_txid, current_vout)
                         
         except ValueError as e:
             # Transaction not found or invalid
@@ -327,7 +386,24 @@ def get_utxo_history(txid: str, vout: int) -> Generator[Dict, None, None]:
             logger.error(f'Electrs error processing {current_txid}:{current_vout}: {e}')
             raise Exception(f'Electrs error: {e}')
     
-    logger.info(f'UTXO trace completed. Visited {len(visited)} transactions.')
+    # Yield final analysis if circular detection was enabled
+    if circular_detector:
+        final_analysis = circular_detector.generate_analysis_report()
+        yield {
+            "type": "circular_analysis_complete",
+            "analysis": final_analysis,
+            "all_addresses": list(all_addresses),
+            "total_transactions": len(visited)
+        }
+    else:
+        # Yield address summary without circular analysis
+        yield {
+            "type": "trace_complete",
+            "all_addresses": list(all_addresses),
+            "total_transactions": len(visited)
+        }
+    
+    logger.info(f'UTXO trace completed. Visited {len(visited)} transactions. Found {len(all_addresses)} unique addresses.')
 
 def get_address_info(address: str) -> Optional[Dict]:
     """Get information about a Bitcoin address using Electrs"""
